@@ -100,6 +100,7 @@ struct window {
 bool debug = false;
 
 static pid_t pid = 0;
+static volatile sig_atomic_t exitSignal = 0;
 
 static char **childArgv = 0;
 static int nChildArgv = 0;
@@ -167,13 +168,18 @@ static int get_argb_visual(Visual **visual, int *depth) {
   return 0;
 }
 
-static void sigHandler(int sig) { kill(pid, sig); }
+static void sigHandler(int sig) {
+  if (pid > 0)
+    kill(pid, sig);
+  else
+    exitSignal = sig;
+}
 
 static void usage(void) {
   fprintf(stderr, "%s v%s \n", NAME, VERSION);
   fprintf(stderr, "\nUsage: %s [-g {w}x{h}+{x}+{y}] [-ni] [-argb] [-fdt]\n \
                [-fs] [-un] [-s] [-st] [-sp] [-a] [-b] [-nf] [-o OPACITY]\n \
-               [-sh SHAPE] [-ov] [-ovr] [-d] [-debug] -- COMMAND ARG1...\n",
+               [-sh SHAPE] [-ov] [-ovr] [-d] [-debug] [-bl] -- COMMAND ARG1...\n",
           NAME);
   fprintf(stderr, "Options:\n \
             -g      - Specify Geometry (w=width, h=height, x=x-coord,\n \
@@ -198,7 +204,9 @@ static void usage(void) {
             -ovr    - Set override_redirect flag on root window (For seamless\n \
                       desktop background integration in fullscreenmode)\n \
             -d      - Daemonize\n \
-            -debug  - Enable debug messages\n");
+            -debug  - Enable debug messages\n \
+            -bl     - Black mode: display a black rectangle without running\n \
+                      an external program\n");
 }
 
 static Window find_subwindow(Window win, int w, int h) {
@@ -330,6 +338,7 @@ int main(int argc, char **argv) {
   bool skip_taskbar = false;
   bool skip_pager = false;
   bool daemonize = false;
+  bool blackMode = false;
 
   win_shape shape = SHAPE_RECT;
   Pixmap mask;
@@ -385,6 +394,8 @@ int main(int argc, char **argv) {
       debug = true;
     } else if (strcmp(argv[i], "-d") == 0) {
       daemonize = true;
+    } else if (strcmp(argv[i], "-bl") == 0) {
+      blackMode = true;
     } else if (strcmp(argv[i], "--") == 0) {
       break;
     } else {
@@ -427,14 +438,15 @@ int main(int argc, char **argv) {
       addArguments(&argv[i], 1);
   }
 
-  if (!nChildArgv) {
+  if (!blackMode && !nChildArgv) {
     fprintf(stderr, "%s: Error: couldn't create command line\n", argv[0]);
     usage();
 
     return 1;
   }
 
-  addArguments(&endArg, 1);
+  if (!blackMode)
+    addArguments(&endArg, 1);
 
   init_x11();
   if (!display)
@@ -744,33 +756,51 @@ int main(int argc, char **argv) {
 
   XSync(display, window.window);
 
-  sprintf(widArg, "0x%x", (int)window.window);
+  if (blackMode) {
+    XSetWindowBackground(display, window.window, BlackPixel(display, screen));
+    XClearWindow(display, window.window);
+    XFlush(display);
 
-  pid = fork();
+    if (debug)
+      fprintf(stderr, NAME ": running in black mode\n");
 
-  switch (pid) {
-  case -1:
-    perror("fork");
-    return 1;
-  case 0:
-    execvp(childArgv[0], childArgv);
-    perror(childArgv[0]);
-    exit(2);
-    break;
-  default:
-    break;
-  }
+    signal(SIGTERM, sigHandler);
+    signal(SIGINT, sigHandler);
 
-  signal(SIGTERM, sigHandler);
-  signal(SIGINT, sigHandler);
+    while (!exitSignal)
+      pause();
 
-  for (;;) {
-    if (waitpid(pid, &status, 0) != -1) {
-      if (WIFEXITED(status))
-        fprintf(stderr, "%s died, exit status %d\n", childArgv[0],
-                WEXITSTATUS(status));
+    if (debug)
+      fprintf(stderr, NAME ": caught signal %d, exiting\n", exitSignal);
+  } else {
+    sprintf(widArg, "0x%x", (int)window.window);
 
+    pid = fork();
+
+    switch (pid) {
+    case -1:
+      perror("fork");
+      return 1;
+    case 0:
+      execvp(childArgv[0], childArgv);
+      perror(childArgv[0]);
+      exit(2);
       break;
+    default:
+      break;
+    }
+
+    signal(SIGTERM, sigHandler);
+    signal(SIGINT, sigHandler);
+
+    for (;;) {
+      if (waitpid(pid, &status, 0) != -1) {
+        if (WIFEXITED(status))
+          fprintf(stderr, "%s died, exit status %d\n", childArgv[0],
+                  WEXITSTATUS(status));
+
+        break;
+      }
     }
   }
 
