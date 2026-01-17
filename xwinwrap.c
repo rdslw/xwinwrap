@@ -591,8 +591,24 @@ int main(int argc, char **argv) {
     wmHint.input = !noFocus;
     wmHint.initial_state = NormalState;
 
-    XSetWMProperties(display, window.window, NULL, NULL, argv, argc, NULL,
-                     &wmHint, NULL);
+    XClassHint classHint;
+    classHint.res_name = "xwinwrap";
+    classHint.res_class = "Xwinwrap";
+
+    char wmName[256];
+    if (blackMode) {
+      snprintf(wmName, sizeof(wmName), "xwinwrap: BLACK");
+    } else {
+      snprintf(wmName, sizeof(wmName), "xwinwrap: %s", childArgv[0]);
+    }
+
+    XTextProperty wmNameProp;
+    XStringListToTextProperty(&(char *){wmName}, 1, &wmNameProp);
+
+    XSetWMProperties(display, window.window, &wmNameProp, NULL, argv, argc, NULL,
+                     &wmHint, &classHint);
+
+    XFree(wmNameProp.value);
 
     xa = ATOM(_NET_WM_WINDOW_TYPE);
     Atom prop;
