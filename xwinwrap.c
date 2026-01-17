@@ -205,8 +205,9 @@ static void usage(void) {
                       desktop background integration in fullscreenmode)\n \
             -d      - Daemonize\n \
             -debug  - Enable debug messages\n \
-            -bl     - Black mode: display a black rectangle without running\n \
-                      an external program\n");
+            -bl [COLOR] - Black mode: display a solid color rectangle without\n \
+                      running an external program. COLOR is optional hex value\n \
+                      (e.g. #1e1e1e or 1e1e1e), defaults to black\n");
 }
 
 static Window find_subwindow(Window win, int w, int h) {
@@ -339,6 +340,7 @@ int main(int argc, char **argv) {
   bool skip_pager = false;
   bool daemonize = false;
   bool blackMode = false;
+  unsigned long blackModeColor = 0x000000;
 
   win_shape shape = SHAPE_RECT;
   Pixmap mask;
@@ -396,6 +398,12 @@ int main(int argc, char **argv) {
       daemonize = true;
     } else if (strcmp(argv[i], "-bl") == 0) {
       blackMode = true;
+      if (i + 1 < argc && argv[i + 1][0] != '-') {
+        char *colorStr = argv[++i];
+        if (colorStr[0] == '#')
+          colorStr++;
+        blackModeColor = strtoul(colorStr, NULL, 16);
+      }
     } else if (strcmp(argv[i], "--") == 0) {
       break;
     } else {
@@ -773,7 +781,7 @@ int main(int argc, char **argv) {
   XSync(display, window.window);
 
   if (blackMode) {
-    XSetWindowBackground(display, window.window, BlackPixel(display, screen));
+    XSetWindowBackground(display, window.window, blackModeColor);
     XClearWindow(display, window.window);
     XFlush(display);
 
